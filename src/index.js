@@ -2,12 +2,12 @@
  * VN 대화창 SVG 렌더러 — Cloudflare Worker
  *
  * 이미지는 GitHub 저장소에 아래 구조로 올려두고, 짧은 코드로 참조합니다.
- *   /bg/0.png ~ /bg/9.png            (배경 10종)
- *   /char/U1_0.png ~ U1_4.png        (캐릭터 U1의 표정 0~4)
+ *   /bg/0.png ~ /bg/9.png            (배경 10종, 1216x832 권장, 꽉 채우는 그림)
+ *   /char/U1_0.png ~ U1_4.png        (캐릭터 U1의 표정 0~4, 배경 투명 PNG 누끼)
  *   /char/U2_0.png ~ U5_4.png        (U2~U5 동일 규칙)
  *
  * 사용법 (마크다운 예시):
- * ![](https://YOUR-WORKER.workers.dev/?bg=3&char=U1_2&name=서윤슬&line=대사내용&affection=65&color=%234fc3e8)
+ * ![](https://YOUR-WORKER.workers.dev/?bg=3&char=U1_2&name=서윤슬&line=대사내용&affection=65&color=pink)
  *
  * 쿼리 파라미터
  *  bg         : 0~9 숫자 (배경 코드, 없으면 기본 그라데이션)
@@ -15,24 +15,35 @@
  *  name       : 이름표 텍스트 (기본 "이름")
  *  line       : 대사 텍스트 (기본 빈 문자열)
  *  affection  : 0~100 숫자 (기본 35)
- *  color      : accent 색상 hex, # 은 %23 으로 인코딩 (기본 #4fc3e8)
+ *  color      : red / sky / yellow / pink / gray  중 하나 (한글 "빨강/하늘/노랑/핑크/회색"도 가능, 기본 sky)
  *
- * 배포 전 꼭 할 일
- *  아래 GITHUB_BASE 를 본인 저장소 경로로 교체하세요.
- *  예) 저장소가 github.com/hurz/vn-assets 이고 기본 브랜치가 main이면:
- *  "https://raw.githubusercontent.com/hurz/vn-assets/main"
+ * 이미지 경로 설정 방법
+ *  1) 깃허브 저장소 루트에 bg 폴더, char 폴더를 만든다.
+ *  2) bg 폴더 안에 0.png, 1.png ... 9.png 로 배경 이미지 10장을 넣는다.
+ *  3) char 폴더 안에 U1_0.png, U1_1.png ... U5_4.png 로 캐릭터별 표정 이미지를 넣는다.
+ *     (U1~U5 = 캐릭터 5명, _0~_4 = 표정 5종)
+ *  4) 아래 GITHUB_BASE 를 본인 저장소의 raw 경로로 바꾼다.
+ *     예) 저장소가 github.com/hurz/vn-assets, 기본 브랜치가 main이면:
+ *     "https://raw.githubusercontent.com/hurz/vn-assets/main"
+ *  5) 그러면 ?bg=3 은 자동으로 .../vn-assets/main/bg/3.png 를,
+ *     ?char=U2_1 은 .../vn-assets/main/char/U2_1.png 를 가리키게 된다.
  *
- * 배포 방법
- *  1. Cloudflare 대시보드 → Workers & Pages → Create Worker
- *  2. 편집기에 이 파일 내용 전체 붙여넣기 (GITHUB_BASE 교체 후) → Deploy
- *  3. 발급된 workers.dev 주소 뒤에 쿼리 파라미터 붙여서 사용
+ * 배포 방법: README.md 참고 (Workers Builds로 깃허브 push시 자동배포)
  */
 
 // ⚠️ 여기를 본인 GitHub 저장소 raw 경로로 교체하세요
-const GITHUB_BASE = 'https://raw.githubusercontent.com/luzruz555/ld/main';
+const GITHUB_BASE = 'https://raw.githubusercontent.com/USERNAME/REPO/main';
 
 const BG_CODE_RE = /^[0-9]$/;
 const CHAR_CODE_RE = /^U[1-5]_[0-4]$/;
+
+const COLOR_MAP = {
+  red: '#e8615c', '빨강': '#e8615c',
+  sky: '#4fc3e8', '하늘': '#4fc3e8',
+  yellow: '#f2c14e', '노랑': '#f2c14e',
+  pink: '#ef7fa0', '핑크': '#ef7fa0',
+  gray: '#9aa3ad', '회색': '#9aa3ad',
+};
 
 export default {
   async fetch(request) {
@@ -44,20 +55,23 @@ export default {
     const name = params.get('name') || '이름';
     const line = params.get('line') || '';
     const affection = clamp(parseInt(params.get('affection') || '35', 10), 0, 100);
-    const color = params.get('color') || '#4fc3e8';
+    const colorKey = (params.get('color') || 'sky').toLowerCase();
+    const color = COLOR_MAP[colorKey] || COLOR_MAP.sky;
 
     const bg = BG_CODE_RE.test(bgCode) ? `${GITHUB_BASE}/bg/${bgCode}.png` : '';
     const char = CHAR_CODE_RE.test(charCode) ? `${GITHUB_BASE}/char/${charCode}.png` : '';
 
     const W = 1216, H = 832;
+    const level = Math.floor(affection / 20) + 1; // 1~5
 
-    const dialogueLines = wrapText(line, 30); // 한 줄당 약 30자
+    const dialogueLines = wrapText(line, 30);
     const dialogueTextSvg = dialogueLines
-      .map((l, i) => `<tspan x="30" dy="${i === 0 ? 0 : 34}">${escapeXml(l)}</tspan>`)
+      .map((l, i) => `<tspan x="34" dy="${i === 0 ? 0 : 34}">${escapeXml(l)}</tspan>`)
       .join('');
 
     const affectionRatio = affection / 100;
-    const barW = 160;
+    const barW = 150;
+    const initial = escapeXml((name.trim()[0] || '?'));
 
     const svg = `
 <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
@@ -67,8 +81,12 @@ export default {
       <stop offset="55%" stop-color="#8fc9ea"/>
       <stop offset="100%" stop-color="#d7ecf7"/>
     </linearGradient>
+    <linearGradient id="dialogueFade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.28"/>
+    </linearGradient>
     <clipPath id="stageClip">
-      <rect x="0" y="0" width="${W}" height="${H}" rx="12"/>
+      <rect x="0" y="0" width="${W}" height="${H}" rx="14"/>
     </clipPath>
   </defs>
 
@@ -79,30 +97,91 @@ export default {
       : `<rect x="0" y="0" width="${W}" height="${H}" fill="url(#skyDefault)"/>`
     }
 
+    <!-- 하단 비네트 (대화창 배경 대비용) -->
+    <rect x="0" y="${H - 300}" width="${W}" height="300" fill="url(#dialogueFade)"/>
+
     <!-- 캐릭터 -->
     ${char
-      ? `<image href="${escapeXml(char)}" x="${W - 620}" y="${H * 0.06}" width="600" height="${H * 0.9}" preserveAspectRatio="xMaxYMax meet"/>`
+      ? `<image href="${escapeXml(char)}" x="${W - 620}" y="${H * 0.05}" width="600" height="${H * 0.9}" preserveAspectRatio="xMaxYMax meet"/>`
       : ''
     }
 
     <!-- 좌상단 호감도 바 -->
     <g transform="translate(24,24)">
-      <rect x="0" y="0" width="216" height="52" rx="26" fill="#ffffff" fill-opacity="0.85"/>
-      <circle cx="26" cy="26" r="13" fill="${color}"/>
-      <path d="M26 33 c-8 -5 -12 -10 -12 -15 c0 -4 3 -7 6.5 -7 c2.5 0 4.5 1.3 5.5 3.3 c1 -2 3 -3.3 5.5 -3.3 c3.5 0 6.5 3 6.5 7 c0 5 -4 10 -12 15z"
-        fill="#ffffff" transform="translate(0,-3) scale(0.62)" />
-      <text x="48" y="19" font-family="sans-serif" font-size="10" font-weight="700" fill="#97a0ab">호감도 <tspan fill="#384049">${affection}</tspan></text>
-      <rect x="48" y="26" width="${barW}" height="7" rx="4" fill="#eef2f7"/>
-      <rect x="48" y="26" width="${(barW * affectionRatio).toFixed(1)}" height="7" rx="4" fill="${color}"/>
+      <rect x="0" y="0" width="256" height="54" rx="27" fill="#ffffff" fill-opacity="0.88"/>
+      <!-- 레벨 배지 -->
+      <circle cx="27" cy="27" r="16" fill="#ffffff" stroke="${color}" stroke-width="2.5"/>
+      <text x="27" y="31" font-family="sans-serif" font-size="12" font-weight="800" fill="${color}" text-anchor="middle">Lv${level}</text>
+      <!-- 하트 아이콘 -->
+      <circle cx="65" cy="27" r="13" fill="${color}"/>
+      <path d="M65 34 c-8 -5 -12 -10 -12 -15 c0 -4 3 -7 6.5 -7 c2.5 0 4.5 1.3 5.5 3.3 c1 -2 3 -3.3 5.5 -3.3 c3.5 0 6.5 3 6.5 7 c0 5 -4 10 -12 15z"
+        fill="#ffffff" transform="translate(0,-4) scale(0.62) translate(0,11)" />
+      <!-- 반짝임 장식 -->
+      <path d="M84 12 l2 5 l5 2 l-5 2 l-2 5 l-2 -5 l-5 -2 l5 -2z" fill="${color}" opacity="0.85"/>
+      <text x="88" y="20" font-family="sans-serif" font-size="10" font-weight="700" fill="#97a0ab">호감도 <tspan fill="#384049">${affection}</tspan></text>
+      <rect x="88" y="27" width="${barW}" height="8" rx="4" fill="#eef2f7"/>
+      <rect x="88" y="27" width="${(barW * affectionRatio).toFixed(1)}" height="8" rx="4" fill="${color}"/>
+    </g>
+
+    <!-- 우상단 아이콘 4종 (장식용, 작동 안 함) -->
+    <g transform="translate(${W - 24 - 4 * 44}, 24)">
+      <!-- 메뉴 -->
+      <g>
+        <circle cx="17" cy="17" r="17" fill="#1a1f2b" fill-opacity="0.45"/>
+        <rect x="10" y="11" width="14" height="2.4" rx="1.2" fill="#fff"/>
+        <rect x="10" y="16" width="14" height="2.4" rx="1.2" fill="#fff"/>
+        <rect x="10" y="21" width="14" height="2.4" rx="1.2" fill="#fff"/>
+      </g>
+      <!-- 기록 -->
+      <g transform="translate(44,0)">
+        <circle cx="17" cy="17" r="17" fill="#1a1f2b" fill-opacity="0.45"/>
+        <rect x="10" y="10" width="14" height="2" rx="1" fill="#fff"/>
+        <rect x="10" y="16" width="14" height="2" rx="1" fill="#fff"/>
+        <rect x="10" y="22" width="9" height="2" rx="1" fill="#fff"/>
+      </g>
+      <!-- 오토 -->
+      <g transform="translate(88,0)">
+        <circle cx="17" cy="17" r="17" fill="${color}" fill-opacity="0.85"/>
+        <text x="17" y="21" font-family="sans-serif" font-size="11" font-weight="800" fill="#fff" text-anchor="middle">AUTO</text>
+      </g>
+      <!-- 빨리감기 -->
+      <g transform="translate(132,0)">
+        <circle cx="17" cy="17" r="17" fill="#1a1f2b" fill-opacity="0.45"/>
+        <path d="M10 10 v14 l9 -7z" fill="#fff"/>
+        <path d="M19 10 v14 l9 -7z" fill="#fff"/>
+      </g>
     </g>
 
     <!-- 대화창 -->
-    <g transform="translate(24, ${H - 24 - 190})">
-      <rect x="0" y="0" width="${W - 48}" height="190" rx="14" fill="#fbfcfe" stroke="${color}" stroke-width="3"/>
-      <rect x="20" y="-19" width="${20 + name.length * 15 + 20}" height="38" rx="9" fill="${color}"/>
-      <text x="40" y="6" font-family="sans-serif" font-size="16" font-weight="700" fill="#ffffff">${escapeXml(name)}</text>
-      <text x="0" y="55" font-family="sans-serif" font-size="16" font-weight="500" fill="#384049">${dialogueTextSvg}</text>
-      <circle cx="${W - 48 - 30}" cy="170" r="4" fill="${color}"/>
+    <g transform="translate(24, ${H - 24 - 204})">
+      <rect x="0" y="0" width="${W - 48}" height="204" rx="18" fill="#fbfcfe" stroke="${color}" stroke-width="3"/>
+
+      <!-- 코너 장식 -->
+      <path d="M${W - 48 - 30} 0 h30 v30 z" fill="${color}"/>
+      <rect x="14" y="14" width="10" height="10" fill="${color}" opacity="0.5" transform="rotate(45 19 19)"/>
+
+      <!-- 캐릭터 아바타 칩 -->
+      <circle cx="40" cy="-8" r="21" fill="#ffffff" stroke="${color}" stroke-width="3"/>
+      <text x="40" y="-2" font-family="sans-serif" font-size="16" font-weight="800" fill="${color}" text-anchor="middle">${initial}</text>
+
+      <!-- 이름표 -->
+      <rect x="68" y="-27" width="${20 + name.length * 16 + 24}" height="40" rx="10" fill="${color}"/>
+      <text x="88" y="-2" font-family="sans-serif" font-size="17" font-weight="700" fill="#ffffff">${escapeXml(name)}</text>
+
+      <!-- 대사 -->
+      <text x="0" y="55" font-family="sans-serif" font-size="17" font-weight="500" fill="#384049">${dialogueTextSvg}</text>
+
+      <!-- 하단 우측 장식 버튼(작동 안 함) -->
+      <g transform="translate(${W - 48 - 168}, 168)">
+        <rect x="0" y="0" width="66" height="26" rx="13" fill="${color}" opacity="0.14"/>
+        <text x="33" y="18" font-family="sans-serif" font-size="11" font-weight="700" fill="${color}" text-anchor="middle">AUTO</text>
+        <rect x="76" y="0" width="66" height="26" rx="13" fill="${color}" opacity="0.14"/>
+        <text x="109" y="18" font-family="sans-serif" font-size="11" font-weight="700" fill="${color}" text-anchor="middle">SKIP</text>
+      </g>
+
+      <!-- 다음 진행 표시 -->
+      <circle cx="${W - 48 - 26}" cy="184" r="4.5" fill="${color}"/>
+      <path d="M${W - 48 - 30} 190 l6 8 l6 -8" stroke="${color}" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
     </g>
   </g>
 </svg>`.trim();
@@ -140,7 +219,6 @@ function wrapText(text, maxCharsPerLine) {
     const candidate = current ? current + ' ' + word : word;
     if (candidate.length > maxCharsPerLine) {
       if (current) lines.push(current);
-      // 단어 자체가 maxChars보다 길면 강제 절단
       if (word.length > maxCharsPerLine) {
         let rest = word;
         while (rest.length > maxCharsPerLine) {
