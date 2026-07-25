@@ -102,7 +102,7 @@ export default {
 
     <!-- 캐릭터 -->
     ${char
-      ? `<image href="${escapeXml(char)}" x="${W - 620}" y="${H * 0.05}" width="600" height="${H * 0.9}" preserveAspectRatio="xMaxYMax meet"/>`
+      ? `<image href="${escapeXml(char)}" x="${(W - 600) / 2}" y="${H * 0.05}" width="600" height="${H * 0.9}" preserveAspectRatio="xMidYMax meet"/>`
       : ''
     }
 
