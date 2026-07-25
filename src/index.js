@@ -64,9 +64,9 @@ export default {
     const W = 1216, H = 832;
     const level = Math.floor(affection / 20) + 1; // 1~5
 
-    const dialogueLines = wrapText(line, 22);
+    const dialogueLines = wrapText(line, 18);
     const dialogueTextSvg = dialogueLines
-      .map((l, i) => `<tspan x="34" dy="${i === 0 ? 0 : 42}">${escapeXml(l)}</tspan>`)
+      .map((l, i) => `<tspan x="34" dy="${i === 0 ? 0 : 46}">${escapeXml(l)}</tspan>`)
       .join('');
 
     const affectionRatio = affection / 100;
@@ -153,8 +153,8 @@ export default {
     </g>
 
     <!-- 대화창 -->
-    <g transform="translate(24, ${H - 24 - 224})">
-      <rect x="0" y="0" width="${W - 48}" height="224" rx="18" fill="#fbfcfe" stroke="${color}" stroke-width="3"/>
+    <g transform="translate(24, ${H - 24 - 248})">
+      <rect x="0" y="0" width="${W - 48}" height="248" rx="18" fill="#fbfcfe" stroke="${color}" stroke-width="3"/>
 
       <!-- 코너 장식 -->
       <path d="M${W - 48 - 30} 0 h30 v30 z" fill="${color}"/>
@@ -169,10 +169,10 @@ export default {
       <text x="98" y="-2" font-family="sans-serif" font-size="21" font-weight="700" fill="#ffffff">${escapeXml(name)}</text>
 
       <!-- 대사 -->
-      <text x="0" y="62" font-family="sans-serif" font-size="22" font-weight="500" fill="#384049">${dialogueTextSvg}</text>
+      <text x="0" y="66" font-family="sans-serif" font-size="26" font-weight="500" fill="#384049">${dialogueTextSvg}</text>
 
       <!-- 하단 우측 장식 버튼 + 다음 진행 표시 (한 줄로 정렬, 작동 안 함) -->
-      <g transform="translate(${W - 48 - 210}, 188)">
+      <g transform="translate(${W - 48 - 210}, 210)">
         <rect x="0" y="0" width="70" height="30" rx="15" fill="${color}" opacity="0.14"/>
         <text x="35" y="20" font-family="sans-serif" font-size="12" font-weight="700" fill="${color}" text-anchor="middle">AUTO</text>
         <rect x="80" y="0" width="70" height="30" rx="15" fill="${color}" opacity="0.14"/>
