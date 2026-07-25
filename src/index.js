@@ -171,17 +171,17 @@ export default {
       <!-- 대사 -->
       <text x="0" y="55" font-family="sans-serif" font-size="17" font-weight="500" fill="#384049">${dialogueTextSvg}</text>
 
-      <!-- 하단 우측 장식 버튼(작동 안 함) -->
-      <g transform="translate(${W - 48 - 168}, 168)">
+      <!-- 하단 우측 장식 버튼 + 다음 진행 표시 (한 줄로 정렬, 작동 안 함) -->
+      <g transform="translate(${W - 48 - 200}, 168)">
         <rect x="0" y="0" width="66" height="26" rx="13" fill="${color}" opacity="0.14"/>
         <text x="33" y="18" font-family="sans-serif" font-size="11" font-weight="700" fill="${color}" text-anchor="middle">AUTO</text>
         <rect x="76" y="0" width="66" height="26" rx="13" fill="${color}" opacity="0.14"/>
         <text x="109" y="18" font-family="sans-serif" font-size="11" font-weight="700" fill="${color}" text-anchor="middle">SKIP</text>
+        <g transform="translate(166,13)">
+          <circle cx="0" cy="-6" r="3" fill="${color}"/>
+          <path d="M-5 1 l5 6 l5 -6" stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+        </g>
       </g>
-
-      <!-- 다음 진행 표시 -->
-      <circle cx="${W - 48 - 26}" cy="184" r="4.5" fill="${color}"/>
-      <path d="M${W - 48 - 30} 190 l6 8 l6 -8" stroke="${color}" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
     </g>
   </g>
 </svg>`.trim();
