@@ -32,7 +32,7 @@
  */
 
 // ⚠️ 여기를 본인 GitHub 저장소 raw 경로로 교체하세요
-const GITHUB_BASE = 'https://raw.githubusercontent.com/USERNAME/REPO/main';
+const GITHUB_BASE = 'https://raw.githubusercontent.com/luzruz555/ld/main';
 
 const BG_CODE_RE = /^[0-9]$/;
 const CHAR_CODE_RE = /^U[1-5]_[0-4]$/;
