@@ -8,5 +8,8 @@
   },
   "devDependencies": {
     "wrangler": "^3.78.0"
+  },
+  "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2"
   }
 }
