@@ -1,0 +1,6 @@
+name = "vn-card-worker"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# 배포 후 접속 주소: https://vn-card-worker.<your-subdomain>.workers.dev
+# name 값을 바꾸면 주소도 바뀝니다. 원하는 이름으로 수정해도 됩니다.
