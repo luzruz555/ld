@@ -1,5 +1,5 @@
 /**
- * VN 대화창 PNG 렌더러 — Cloudflare Worker (resvg-wasm으로 실제 PNG 래스터화)
+ * VN 대화창 SVG 렌더러 — Cloudflare Worker (무료 플랜용, 가벼운 SVG 출력)
  *
  * 이미지는 GitHub 저장소에 아래 구조로 올려두고, 짧은 코드로 참조합니다.
  *   /bg/0.png ~ /bg/9.png            (배경 10종, 1216x832 권장, 꽉 채우는 그림)
@@ -7,19 +7,20 @@
  *   /char/U1_0.png ~ U1_4.png        (캐릭터 U1의 표정 0~4, 배경 투명 PNG 누끼)
  *   /char/LUZ_0.png                  (테스트용 캐릭터, char=LUZ_0)
  *   /char/U2_0.png ~ U5_4.png        (U2~U5 동일 규칙)
- *   /fonts/NotoSansKR-Regular.ttf    (한글 렌더링용 폰트, 아래 안내 참고)
  *
- * ※ resvg-wasm은 SVG 안의 <image href="원격URL">을 직접 못 불러옵니다
- *   (브라우저가 아니라 서버에서 그림을 굽는 방식이라 네트워크 접근이 제한됨).
- *   그래서 배경/캐릭터 이미지는 워커가 미리 fetch해서 base64로 SVG에 박아 넣습니다.
- *   (첫 요청 이후엔 Cache API에 캐시되어 그다음부턴 빠릅니다.)
+ * ※ 이 버전은 워커가 직접 PNG로 굽지 않고 SVG 그대로 반환합니다.
+ *   (PNG 래스터화는 CPU를 많이 써서 무료 플랜 10ms 한도를 넘겨 Error 1102가 났었음)
+ *   SVG 안의 <image href="원격URL">은 클라이언트(브라우저)가 알아서 불러오므로
+ *   워커는 텍스트만 조립하면 되고 CPU 사용량이 거의 없습니다.
+ *   진짜 PNG 파일이 필요하면 아래처럼 wsrv.nl 프록시를 앞에 붙여서 씁니다:
+ *   https://wsrv.nl/?url=인코딩된_이_워커_URL&output=png
  *
  * 사용법 (마크다운 예시):
  * ![](https://YOUR-WORKER.workers.dev/?bg=3&char=U1_2&name=서윤슬&line=대사내용&affection=65&color=pink)
  *
  * 쿼리 파라미터
- *  bg         : 0~9 숫자 (배경 코드, 없으면 기본 그라데이션)
- *  char       : U1_0 ~ U5_4 형식 (캐릭터_표정 코드, 없으면 표시 안 함)
+ *  bg         : 0~9 또는 t (배경 코드, 없으면 기본 그라데이션)
+ *  char       : U1_0 ~ U5_4 또는 LUZ_0 (캐릭터_표정 코드, 없으면 표시 안 함)
  *  name       : 이름표 텍스트 (기본 "이름")
  *  line       : 대사 텍스트 (기본 빈 문자열)
  *  affection  : 0~100 숫자 (기본 35)
@@ -27,10 +28,6 @@
  *
  * 배포 방법: README.md 참고 (Workers Builds로 깃허브 push시 자동배포)
  */
-
-import { Resvg, initWasm } from '@resvg/resvg-wasm';
-// wrangler가 빌드 시점에 이 wasm 파일을 정적으로 번들링함 (동적 로드 불가)
-import RESVG_WASM from '@resvg/resvg-wasm/index_bg.wasm';
 
 // ⚠️ 여기를 본인 GitHub 저장소 raw 경로로 교체하세요
 const GITHUB_BASE = 'https://raw.githubusercontent.com/luzruz555/ld/main';
@@ -46,92 +43,6 @@ const COLOR_MAP = {
   gray: '#9aa3ad', '회색': '#9aa3ad',
 };
 
-/**
- * PNG 출력을 위해 resvg-wasm으로 SVG를 실제 래스터화합니다.
- * 한글 렌더링을 위해 폰트 파일을 저장소에서 fetch해서 사용합니다.
- *
- * 폰트 설정 방법 (최초 1회만)
- *  1) Noto Sans KR Regular.ttf 를 구글 폰트에서 받는다.
- *     https://fonts.google.com/noto/specimen/Noto+Sans+KR
- *  2) 깃허브 저장소 루트에 fonts 폴더를 만들고 그 안에
- *     NotoSansKR-Regular.ttf 라는 이름으로 넣는다.
- *  3) 그러면 아래 FONT_URL 이 자동으로 그 파일을 가리킴 (수정 불필요, GITHUB_BASE 재사용)
- */
-const FONT_URL = `${GITHUB_BASE}/fonts/NotoSansKR-Regular.ttf`;
-
-let wasmInitPromise = null;
-let fontPromise = null;
-
-async function ensureWasm() {
-  if (!wasmInitPromise) {
-    // 정적 import이므로 wrangler가 빌드 시점에 wasm을 미리 컴파일해둠
-    wasmInitPromise = initWasm(RESVG_WASM);
-  }
-  await wasmInitPromise;
-}
-
-async function getFontBuffer() {
-  if (fontPromise) return fontPromise;
-
-  fontPromise = (async () => {
-    const cache = caches.default;
-    const cacheKey = new Request(FONT_URL);
-    let res = await cache.match(cacheKey);
-
-    if (!res) {
-      res = await fetch(FONT_URL);
-      if (res.ok) {
-        const toCache = res.clone();
-        const headers = new Headers(toCache.headers);
-        headers.set('Cache-Control', 'public, max-age=2592000'); // 30일
-        // waitUntil 없이도 await로 처리 (요청 흐름 내에서 캐시 저장)
-        await cache.put(cacheKey, new Response(toCache.body, { headers }));
-      }
-    }
-
-    if (!res.ok) return null;
-    return new Uint8Array(await res.arrayBuffer());
-  })();
-
-  return fontPromise;
-}
-
-async function fetchAndCacheBinary(url) {
-  const cache = caches.default;
-  const cacheKey = new Request(url);
-  let res = await cache.match(cacheKey);
-
-  if (!res) {
-    res = await fetch(url);
-    if (res.ok) {
-      const toCache = res.clone();
-      const headers = new Headers(toCache.headers);
-      headers.set('Cache-Control', 'public, max-age=2592000'); // 30일
-      await cache.put(cacheKey, new Response(toCache.body, { headers }));
-    }
-  }
-
-  if (!res.ok) return null;
-  return res.arrayBuffer();
-}
-
-function arrayBufferToBase64(buffer) {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-async function toDataUri(url) {
-  if (!url) return '';
-  const buf = await fetchAndCacheBinary(url);
-  if (!buf) return '';
-  return `data:image/png;base64,${arrayBufferToBase64(buf)}`;
-}
-
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -145,37 +56,14 @@ export default {
     const colorKey = (params.get('color') || 'sky').toLowerCase();
     const color = COLOR_MAP[colorKey] || COLOR_MAP.sky;
 
-    const bgUrl = BG_CODE_RE.test(bgCode) ? `${GITHUB_BASE}/bg/${bgCode}.png` : '';
-    const charUrl = CHAR_CODE_RE.test(charCode) ? `${GITHUB_BASE}/char/${charCode}.png` : '';
-
-    await ensureWasm();
-
-    // resvg는 <image href="원격URL">을 직접 못 불러오므로,
-    // 미리 fetch해서 base64 데이터URI로 만들어 SVG에 박아 넣는다.
-    const [bg, char, fontBuffer] = await Promise.all([
-      toDataUri(bgUrl),
-      toDataUri(charUrl),
-      getFontBuffer(),
-    ]);
+    const bg = BG_CODE_RE.test(bgCode) ? `${GITHUB_BASE}/bg/${bgCode}.png` : '';
+    const char = CHAR_CODE_RE.test(charCode) ? `${GITHUB_BASE}/char/${charCode}.png` : '';
 
     const svg = buildSvg({ bg, char, name, line, affection, color });
 
-    const resvg = new Resvg(svg, {
-      fitTo: { mode: 'width', value: 1216 },
-      font: fontBuffer
-        ? {
-            fontBuffers: [fontBuffer],
-            defaultFontFamily: 'Noto Sans KR',
-            sansSerifFamily: 'Noto Sans KR',
-          }
-        : { loadSystemFonts: false },
-    });
-
-    const pngBuffer = resvg.render().asPng();
-
-    return new Response(pngBuffer, {
+    return new Response(svg, {
       headers: {
-        'content-type': 'image/png',
+        'content-type': 'image/svg+xml',
         'cache-control': 'public, max-age=3600',
       },
     });
