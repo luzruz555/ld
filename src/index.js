@@ -3,7 +3,9 @@
  *
  * 이미지는 GitHub 저장소에 아래 구조로 올려두고, 짧은 코드로 참조합니다.
  *   /bg/0.png ~ /bg/9.png            (배경 10종, 1216x832 권장, 꽉 채우는 그림)
+ *   /bg/t.png                        (테스트용 배경, bg=t)
  *   /char/U1_0.png ~ U1_4.png        (캐릭터 U1의 표정 0~4, 배경 투명 PNG 누끼)
+ *   /char/LUZ_0.png                  (테스트용 캐릭터, char=LUZ_0)
  *   /char/U2_0.png ~ U5_4.png        (U2~U5 동일 규칙)
  *   /fonts/NotoSansKR-Regular.ttf    (한글 렌더링용 폰트, 아래 안내 참고)
  *
@@ -33,8 +35,8 @@ import RESVG_WASM from '@resvg/resvg-wasm/index_bg.wasm';
 // ⚠️ 여기를 본인 GitHub 저장소 raw 경로로 교체하세요
 const GITHUB_BASE = 'https://raw.githubusercontent.com/luzruz555/ld/main';
 
-const BG_CODE_RE = /^[0-9]$/;
-const CHAR_CODE_RE = /^U[1-5]_[0-4]$/;
+const BG_CODE_RE = /^([0-9]|t)$/;
+const CHAR_CODE_RE = /^(U[1-5]_[0-4]|LUZ_0)$/;
 
 const COLOR_MAP = {
   red: '#e8615c', '빨강': '#e8615c',
