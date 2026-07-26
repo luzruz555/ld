@@ -1,4 +1,4 @@
-name = "vn-card-worker"
+name = "ld"
 main = "src/index.js"
 compatibility_date = "2024-09-23"
 
