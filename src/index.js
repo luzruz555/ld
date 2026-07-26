@@ -1,6 +1,5 @@
 /**
- * VN 대화창 PNG 렌더러 — Cloudflare Worker (resvg-wasm으로 실제 PNG 래스터화)
- * ※ Workers 유료 플랜 필요 (CPU 시간 10ms 제한 → 30초로 늘어남)
+ * VN 대화창 렌더러 — Cloudflare Worker (무료 플랜에서 동작, 최종 출력 PNG)
  *
  * 이미지는 GitHub 저장소에 아래 구조로 올려두고, 짧은 코드로 참조합니다.
  *   /bg/0.png ~ /bg/9.png            (배경 10종, 1216x832 권장, 꽉 채우는 그림)
@@ -8,12 +7,14 @@
  *   /char/U1_0.png ~ U1_4.png        (캐릭터 U1의 표정 0~4, 배경 투명 PNG 누끼)
  *   /char/LUZ_0.png                  (테스트용 캐릭터, char=LUZ_0)
  *   /char/U2_0.png ~ U5_4.png        (U2~U5 동일 규칙)
- *   /fonts/NotoSansKR-Regular.ttf    (한글 렌더링용 폰트, README 참고)
  *
- * ※ resvg-wasm은 SVG 안의 <image href="원격URL">을 직접 못 불러옵니다.
- *   그래서 배경/캐릭터 이미지는 워커가 미리 fetch해서 base64로 SVG에 박아 넣습니다.
- *   폰트도 마찬가지로 fetch해서 사용합니다.
- *   (fetch한 이미지/폰트는 Cache API에 캐시되어 두 번째 요청부터는 빠릅니다.)
+ * ※ 동작 방식
+ *   워커 자체는 SVG를 조립하기만 해서 CPU를 거의 안 씁니다 (무료 플랜 10ms 한도 안전).
+ *   대신 실제 PNG 변환은 wsrv.nl(외부 무료 이미지 프록시)에 맡깁니다.
+ *   사용자는 아래 URL을 그대로 마크다운에 넣기만 하면 됩니다 — 인코딩 등 손댈 것 없음.
+ *   워커가 내부적으로 자기 자신의 SVG 주소를 인코딩해서 wsrv.nl에 넘기고,
+ *   변환된 진짜 PNG를 그대로 돌려줍니다.
+ *   (혹시 SVG 그대로 필요하면 URL 끝에 &format=svg 를 붙이면 됩니다.)
  *
  * 사용법 (마크다운 예시, 인코딩 불필요):
  * ![](https://YOUR-WORKER.workers.dev/?bg=3&char=U1_2&name=서윤슬&line=대사내용&affection=65&color=pink)
@@ -25,16 +26,13 @@
  *  line       : 대사 텍스트 (기본 빈 문자열)
  *  affection  : 0~100 숫자 (기본 35)
  *  color      : red / sky / yellow / pink / gray  중 하나 (한글 "빨강/하늘/노랑/핑크/회색"도 가능, 기본 sky)
+ *  format=svg : (선택) 실제 PNG 대신 가벼운 SVG를 그대로 받고 싶을 때
  *
  * 배포 방법: README.md 참고 (Workers Builds로 깃허브 push시 자동배포)
  */
 
-import { Resvg, initWasm } from '@resvg/resvg-wasm';
-import RESVG_WASM from '@resvg/resvg-wasm/index_bg.wasm';
-
 // ⚠️ 여기를 본인 GitHub 저장소 raw 경로로 교체하세요
 const GITHUB_BASE = 'https://raw.githubusercontent.com/luzruz555/ld/main';
-const FONT_URL = `${GITHUB_BASE}/fonts/NotoSansKR-Regular.ttf`;
 
 const BG_CODE_RE = /^([0-9]|t)$/;
 const CHAR_CODE_RE = /^(U[1-5]_[0-4]|LUZ_0)$/;
@@ -46,53 +44,6 @@ const COLOR_MAP = {
   pink: '#ef7fa0', '핑크': '#ef7fa0',
   gray: '#9aa3ad', '회색': '#9aa3ad',
 };
-
-let wasmReady = null;
-function ensureWasm() {
-  if (!wasmReady) wasmReady = initWasm(RESVG_WASM);
-  return wasmReady;
-}
-
-async function fetchAndCacheBinary(url) {
-  const cache = caches.default;
-  const cacheKey = new Request(url);
-  let res = await cache.match(cacheKey);
-
-  if (!res) {
-    res = await fetch(url);
-    if (res.ok) {
-      const toCache = res.clone();
-      const headers = new Headers(toCache.headers);
-      headers.set('Cache-Control', 'public, max-age=2592000'); // 30일
-      await cache.put(cacheKey, new Response(toCache.body, { headers }));
-    }
-  }
-
-  if (!res.ok) return null;
-  return res.arrayBuffer();
-}
-
-function arrayBufferToBase64(buffer) {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-async function toDataUri(url) {
-  if (!url) return '';
-  const buf = await fetchAndCacheBinary(url);
-  if (!buf) return '';
-  return `data:image/png;base64,${arrayBufferToBase64(buf)}`;
-}
-
-async function getFontBuffer() {
-  const buf = await fetchAndCacheBinary(FONT_URL);
-  return buf ? new Uint8Array(buf) : null;
-}
 
 export default {
   async fetch(request) {
@@ -107,39 +58,51 @@ export default {
     const colorKey = (params.get('color') || 'sky').toLowerCase();
     const color = COLOR_MAP[colorKey] || COLOR_MAP.sky;
 
-    const bgUrl = BG_CODE_RE.test(bgCode) ? `${GITHUB_BASE}/bg/${bgCode}.png` : '';
-    const charUrl = CHAR_CODE_RE.test(charCode) ? `${GITHUB_BASE}/char/${charCode}.png` : '';
-
-    await ensureWasm();
-
-    const [bg, char, fontBuffer] = await Promise.all([
-      toDataUri(bgUrl),
-      toDataUri(charUrl),
-      getFontBuffer(),
-    ]);
+    const bg = BG_CODE_RE.test(bgCode) ? `${GITHUB_BASE}/bg/${bgCode}.png` : '';
+    const char = CHAR_CODE_RE.test(charCode) ? `${GITHUB_BASE}/char/${charCode}.png` : '';
 
     const svg = buildSvg({ bg, char, name, line, affection, color });
 
-    const resvg = new Resvg(svg, {
-      fitTo: { mode: 'width', value: 1216 },
-      font: fontBuffer
-        ? {
-            fontBuffers: [fontBuffer],
-            loadSystemFonts: false,
-            defaultFontFamily: 'Noto Sans KR',
-            sansSerifFamily: 'Noto Sans KR',
-          }
-        : { loadSystemFonts: false },
-    });
+    // ?format=svg 로 요청하면 (또는 wsrv.nl이 내부적으로 우리 자신을 다시 호출할 때)
+    // 가벼운 SVG를 그대로 반환한다. CPU 사용량이 거의 없어 무료 플랜에 안전하다.
+    const isInternalSvgRequest = params.get('format') === 'svg' || params.has('__svg');
+    if (isInternalSvgRequest) {
+      return new Response(svg, {
+        headers: {
+          'content-type': 'image/svg+xml',
+          'cache-control': 'public, max-age=3600',
+        },
+      });
+    }
 
-    const pngBuffer = resvg.render().asPng();
+    // 기본 동작: 사용자가 그대로 마크다운에 넣는 이 URL 자체가 진짜 PNG를 돌려준다.
+    // 워커가 자기 자신의 SVG 주소를 내부적으로 인코딩해서 wsrv.nl에 넘기고,
+    // wsrv.nl이 실제로 SVG→PNG 변환을 수행한 결과를 그대로 스트리밍해서 돌려준다.
+    // (fetch 대기시간은 Workers의 CPU 과금 시간에 포함되지 않으므로 10ms 한도에 안전하다.)
+    const selfSvgUrl = new URL(request.url);
+    selfSvgUrl.searchParams.set('__svg', '1');
+    const wsrvUrl = `https://wsrv.nl/?url=${encodeURIComponent(selfSvgUrl.toString())}&output=png`;
 
-    return new Response(pngBuffer, {
-      headers: {
-        'content-type': 'image/png',
-        'cache-control': 'public, max-age=3600',
-      },
-    });
+    try {
+      const pngRes = await fetch(wsrvUrl);
+      if (!pngRes.ok) {
+        // wsrv.nl 쪽 문제 시, 최소한 SVG라도 보여주도록 폴백
+        return new Response(svg, {
+          headers: { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=300' },
+        });
+      }
+      return new Response(pngRes.body, {
+        headers: {
+          'content-type': pngRes.headers.get('content-type') || 'image/png',
+          'cache-control': 'public, max-age=3600',
+        },
+      });
+    } catch (err) {
+      // 네트워크 오류 등 예외 상황에서도 SVG 폴백
+      return new Response(svg, {
+        headers: { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=300' },
+      });
+    }
   },
 };
 
