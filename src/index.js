@@ -228,7 +228,7 @@ function buildSvg({ bg, char, name, line, affection, color }) {
 
     <!-- 좌상단 호감도 바 -->
     <g transform="translate(24,24)">
-      <rect x="0" y="0" width="310" height="68" rx="34" fill="#ffffff" fill-opacity="0.88"/>
+      <rect x="0" y="0" width="324" height="68" rx="34" fill="#ffffff" fill-opacity="0.88"/>
       <!-- 레벨 배지 -->
       <circle cx="34" cy="34" r="21" fill="#ffffff" stroke="${color}" stroke-width="3"/>
       <text x="34" y="40" font-family="'Noto Sans KR', sans-serif" font-size="15" font-weight="800" fill="${color}" text-anchor="middle">Lv${level}</text>
@@ -238,9 +238,9 @@ function buildSvg({ bg, char, name, line, affection, color }) {
         fill="#ffffff" transform="translate(0,-5.4) scale(0.62) translate(0,14.5)" />
       <!-- 반짝임 장식 -->
       <path d="M107 14 l2.6 6.6 l6.6 2.6 l-6.6 2.6 l-2.6 6.6 l-2.6 -6.6 l-6.6 -2.6 l6.6 -2.6z" fill="${color}" opacity="0.85"/>
-      <text x="112" y="26" font-family="'Noto Sans KR', sans-serif" font-size="13" font-weight="700" fill="#97a0ab">호감도 <tspan fill="#384049" font-size="16">${affection}</tspan></text>
-      <rect x="112" y="36" width="${barW}" height="11" rx="5.5" fill="#eef2f7"/>
-      <rect x="112" y="36" width="${(barW * affectionRatio).toFixed(1)}" height="11" rx="5.5" fill="${color}"/>
+      <text x="126" y="26" font-family="'Noto Sans KR', sans-serif" font-size="13" font-weight="700" fill="#97a0ab">호감도 <tspan fill="#384049" font-size="16">${affection}</tspan></text>
+      <rect x="126" y="36" width="${barW}" height="11" rx="5.5" fill="#eef2f7"/>
+      <rect x="126" y="36" width="${(barW * affectionRatio).toFixed(1)}" height="11" rx="5.5" fill="${color}"/>
     </g>
 
     <!-- 우상단 아이콘 4종 (장식용, 작동 안 함) -->
