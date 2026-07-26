@@ -1,0 +1,5 @@
+name = "ld"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# 배포 후 접속 주소: https://ld.<your-subdomain>.workers.dev
