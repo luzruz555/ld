@@ -1,5 +1,5 @@
 /**
- * VN 대화창 SVG 렌더러 — Cloudflare Worker (무료 플랜용, 가벼운 SVG 출력)
+ * VN 대화창 렌더러 — Cloudflare Worker (무료 플랜에서 동작, 최종 출력 PNG)
  *
  * 이미지는 GitHub 저장소에 아래 구조로 올려두고, 짧은 코드로 참조합니다.
  *   /bg/0.png ~ /bg/9.png            (배경 10종, 1216x832 권장, 꽉 채우는 그림)
@@ -8,14 +8,15 @@
  *   /char/LUZ_0.png                  (테스트용 캐릭터, char=LUZ_0)
  *   /char/U2_0.png ~ U5_4.png        (U2~U5 동일 규칙)
  *
- * ※ 이 버전은 워커가 직접 PNG로 굽지 않고 SVG 그대로 반환합니다.
- *   (PNG 래스터화는 CPU를 많이 써서 무료 플랜 10ms 한도를 넘겨 Error 1102가 났었음)
- *   SVG 안의 <image href="원격URL">은 클라이언트(브라우저)가 알아서 불러오므로
- *   워커는 텍스트만 조립하면 되고 CPU 사용량이 거의 없습니다.
- *   진짜 PNG 파일이 필요하면 아래처럼 wsrv.nl 프록시를 앞에 붙여서 씁니다:
- *   https://wsrv.nl/?url=인코딩된_이_워커_URL&output=png
+ * ※ 동작 방식
+ *   워커 자체는 SVG를 조립하기만 해서 CPU를 거의 안 씁니다 (무료 플랜 10ms 한도 안전).
+ *   대신 실제 PNG 변환은 wsrv.nl(외부 무료 이미지 프록시)에 맡깁니다.
+ *   사용자는 아래 URL을 그대로 마크다운에 넣기만 하면 됩니다 — 인코딩 등 손댈 것 없음.
+ *   워커가 내부적으로 자기 자신의 SVG 주소를 인코딩해서 wsrv.nl에 넘기고,
+ *   변환된 진짜 PNG를 그대로 돌려줍니다.
+ *   (혹시 SVG 그대로 필요하면 URL 끝에 &format=svg 를 붙이면 됩니다.)
  *
- * 사용법 (마크다운 예시):
+ * 사용법 (마크다운 예시, 인코딩 불필요):
  * ![](https://YOUR-WORKER.workers.dev/?bg=3&char=U1_2&name=서윤슬&line=대사내용&affection=65&color=pink)
  *
  * 쿼리 파라미터
@@ -25,6 +26,7 @@
  *  line       : 대사 텍스트 (기본 빈 문자열)
  *  affection  : 0~100 숫자 (기본 35)
  *  color      : red / sky / yellow / pink / gray  중 하나 (한글 "빨강/하늘/노랑/핑크/회색"도 가능, 기본 sky)
+ *  format=svg : (선택) 실제 PNG 대신 가벼운 SVG를 그대로 받고 싶을 때
  *
  * 배포 방법: README.md 참고 (Workers Builds로 깃허브 push시 자동배포)
  */
@@ -61,12 +63,46 @@ export default {
 
     const svg = buildSvg({ bg, char, name, line, affection, color });
 
-    return new Response(svg, {
-      headers: {
-        'content-type': 'image/svg+xml',
-        'cache-control': 'public, max-age=3600',
-      },
-    });
+    // ?format=svg 로 요청하면 (또는 wsrv.nl이 내부적으로 우리 자신을 다시 호출할 때)
+    // 가벼운 SVG를 그대로 반환한다. CPU 사용량이 거의 없어 무료 플랜에 안전하다.
+    const isInternalSvgRequest = params.get('format') === 'svg' || params.has('__svg');
+    if (isInternalSvgRequest) {
+      return new Response(svg, {
+        headers: {
+          'content-type': 'image/svg+xml',
+          'cache-control': 'public, max-age=3600',
+        },
+      });
+    }
+
+    // 기본 동작: 사용자가 그대로 마크다운에 넣는 이 URL 자체가 진짜 PNG를 돌려준다.
+    // 워커가 자기 자신의 SVG 주소를 내부적으로 인코딩해서 wsrv.nl에 넘기고,
+    // wsrv.nl이 실제로 SVG→PNG 변환을 수행한 결과를 그대로 스트리밍해서 돌려준다.
+    // (fetch 대기시간은 Workers의 CPU 과금 시간에 포함되지 않으므로 10ms 한도에 안전하다.)
+    const selfSvgUrl = new URL(request.url);
+    selfSvgUrl.searchParams.set('__svg', '1');
+    const wsrvUrl = `https://wsrv.nl/?url=${encodeURIComponent(selfSvgUrl.toString())}&output=png`;
+
+    try {
+      const pngRes = await fetch(wsrvUrl);
+      if (!pngRes.ok) {
+        // wsrv.nl 쪽 문제 시, 최소한 SVG라도 보여주도록 폴백
+        return new Response(svg, {
+          headers: { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=300' },
+        });
+      }
+      return new Response(pngRes.body, {
+        headers: {
+          'content-type': pngRes.headers.get('content-type') || 'image/png',
+          'cache-control': 'public, max-age=3600',
+        },
+      });
+    } catch (err) {
+      // 네트워크 오류 등 예외 상황에서도 SVG 폴백
+      return new Response(svg, {
+        headers: { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=300' },
+      });
+    }
   },
 };
 
