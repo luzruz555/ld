@@ -177,7 +177,7 @@ async function render(p) {
     const one = Buffer.alloc(FRAME_BYTES);
     drawFrame(one, 0);
     const img = sharp(one, { raw: { width: W, height: H, channels: 4 } });
-    return p.anim ? img.webp({ quality: 85 }).toBuffer() : img.png().toBuffer();
+    return p.anim ? img.webp({ quality: 90, smartSubsample: true }).toBuffer() : img.png().toBuffer();
   }
 
   // 4) 프레임들을 세로로 이어 붙인 뒤 한 번에 애니메이션 WebP로 인코딩
@@ -187,7 +187,7 @@ async function render(p) {
     drawFrame(strip.subarray(i * FRAME_BYTES, (i + 1) * FRAME_BYTES), offset);
   }
   return sharp(strip, { raw: { width: W, height: H * FRAMES, channels: 4, pageHeight: H } })
-    .webp({ quality: 75, effort: 2, loop: 0, delay: Array(FRAMES).fill(FRAME_DELAY) })
+    .webp({ quality: 90, smartSubsample: true, effort: 2, loop: 0, delay: Array(FRAMES).fill(FRAME_DELAY) })
     .toBuffer();
 }
 
