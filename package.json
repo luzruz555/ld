@@ -1,15 +1,13 @@
 {
-  "name": "vn-card-worker",
+  "name": "vn-card-server",
   "version": "1.0.0",
   "private": true,
+  "main": "server.js",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
-  },
-  "devDependencies": {
-    "wrangler": "^3.78.0"
+    "start": "node server.js"
   },
   "dependencies": {
-    "@resvg/resvg-wasm": "^2.6.2"
+    "express": "^4.21.0",
+    "sharp": "^0.35.5"
   }
 }
