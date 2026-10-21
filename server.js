@@ -97,11 +97,20 @@ function parseParams(q) {
   return {
     bg: BG_CODE_RE.test(bg) ? bg : '',
     char: CHAR_CODE_RE.test(char) ? char : '',
-    name: str(q.name, '이름').slice(0, 20),
-    line: str(q.line).slice(0, 200),
+    name: fixText(str(q.name, '이름')).slice(0, 20),
+    line: fixText(str(q.line)).slice(0, 200),
     color: COLOR_MAP[colorKey] || COLOR_MAP.sky,
     anim: str(q.anim) !== '0',
   };
+}
+
+// iOS 등에서 %가 한 번 더 인코딩돼 '%20'이 글자 그대로 들어오는 경우를 풀어준다.
+// 직접 친 줄바꿈 표기(\\n)도 줄바꿈으로 바꾼다.
+function fixText(t) {
+  for (let i = 0; i < 2 && /%[0-9A-Fa-f]{2}/.test(t); i++) {
+    try { t = decodeURIComponent(t); } catch { break; }
+  }
+  return t.replace(/\\n/g, '\n');
 }
 
 async function assetMtime(sub, code) {
