@@ -5,11 +5,13 @@
  * ![](https://내도메인/?bg=0&char=U1_0&name=서윤슬&line=대사&color=pink)
  *
  * 쿼리 파라미터
- *  bg        : 배경 코드 → assets/bg/{코드}.png   (예: 0~9, t)
- *  char      : 캐릭터 코드 → assets/char/{코드}.png (예: U1_0, LUZ_0, 나중에 이름_0)
- *  name      : 이름표
+ *  bg        : 배경 번호 0~19 → bg/{번호}.png (테스트용 t도 가능)
+ *  char      : 캐릭터 코드 (예: U1_2_13 = U1의 의상 2번, 감정 13번 → char/U1/2_13.png)
+ *              U1_13 처럼 의상을 빼면 의상 0번. 예전 방식 char/U1_0.png 파일도 그대로 동작
+ *              등록된 캐릭터(jiyul, sua …, 한글 '지율'도 가능)는 이름표·색이 자동으로 들어간다
+ *  name      : 이름표 (등록 캐릭터는 생략 가능)
  *  line      : 대사 (줄바꿈은 %0A)
- *  color     : red / sky / yellow / pink / gray (한글 빨강/하늘/노랑/핑크/회색도 가능)
+ *  color     : red / sky / yellow / pink / gray (한글도 가능) 또는 색코드 ff8a3d. 등록 캐릭터는 생략 가능
  *  anim      : 0 이면 움직임 없는 정지 PNG로 반환 (기본은 애니메이션 WebP)
  *
  * 같은 파라미터 조합은 처음 한 번만 렌더링하고, 이후엔 디스크 캐시에서 바로 응답한다.
@@ -50,7 +52,32 @@ const COLOR_MAP = {
 
 // 영문/숫자만 허용 → 경로 조작(../) 차단. 파일만 추가하면 새 코드가 바로 동작한다.
 const BG_CODE_RE = /^[A-Za-z0-9]+$/;
-const CHAR_CODE_RE = /^[A-Za-z0-9]+_[0-9]+$/;
+const CHAR_CODE_RE = /^[A-Za-z0-9가-힣]+(_[0-9]{1,2}){1,2}$/;
+const HEX_RE = /^#?([0-9A-Fa-f]{6})$/;
+
+// ── 배경 개수 (0 ~ 19) ──
+const BG_COUNT = 20;
+
+// ── 등록 캐릭터: 코드(=char 폴더 이름) → 이름표·테두리색, 한글로 불러도 되는 별명 ──
+// 여기 등록하면 char=jiyul_0_3 만 써도 이름·색이 자동으로 들어간다. (name, color를 주면 그게 우선)
+const CHARS = {
+  jiyul:   { name: '서지율', color: '#ff8a3d', alias: ['지율', '서지율'] },
+  sua:     { name: '민수아', color: '#e2405a', alias: ['수아', '민수아'] },
+  soi:     { name: '유소이', color: '#ff4fa0', alias: ['소이', '유소이'] },
+  sia:     { name: '윤시아', color: '#5d7fd6', alias: ['시아', '윤시아'] },
+  chaeyun: { name: '민채윤', color: '#e0507a', alias: ['채윤', '민채윤'] },
+  huiyul:  { name: '서희율', color: '#9a7cf0', alias: ['희율', '서희율'] },
+  rua:     { name: '루아',   color: '#18c6d6', alias: ['루아'] },
+};
+const ALIAS = {};
+for (const [id, c] of Object.entries(CHARS)) {
+  ALIAS[id.toLowerCase()] = id;
+  for (const a of c.alias) ALIAS[a] = id;
+}
+
+// ── 캐릭터 1명당 의상·감정 개수 (여기 숫자만 바꾸면 됨) ──
+const OUTFITS = 4;    // 의상 0 ~ 3
+const EMOTIONS = 25;  // 감정 0 ~ 24
 
 const app = express();
 const inFlight = new Map(); // 같은 요청이 동시에 여러 번 와도 한 번만 렌더링
@@ -60,7 +87,9 @@ app.get('/', async (req, res) => {
     const p = parseParams(req.query);
     const ext = p.anim ? 'webp' : 'png';
     // 같은 이름으로 이미지를 교체해도 새로 그리도록 파일 수정시각을 캐시 키에 포함
-    const mtimes = await Promise.all([assetMtime('bg', p.bg), assetMtime('char', p.char)]);
+    p.bgFile = p.bg ? `bg/${p.bg}.png` : null;
+    p.charFile = await resolveChar(p.char);
+    const mtimes = await Promise.all([assetMtime(p.bgFile), assetMtime(p.charFile)]);
     const key = crypto.createHash('sha1').update(JSON.stringify([p, mtimes])).digest('hex');
     const file = path.join(CACHE_DIR, `${key}.${ext}`);
 
@@ -91,17 +120,38 @@ app.listen(PORT, () => console.log(`vn-server listening on :${PORT}`));
 
 function parseParams(q) {
   const str = (v, d = '') => (typeof v === 'string' ? v : d);
-  const colorKey = str(q.color, 'sky').toLowerCase();
-  const bg = str(q.bg);
-  const char = str(q.char);
+  const bg = str(q.bg).trim();
+  const char = normChar(fixText(str(q.char)).trim());
+  const info = char ? CHARS[char.split('_')[0]] : null;
+
+  const colorKey = fixText(str(q.color)).trim().toLowerCase();
+  const hex = colorKey.match(HEX_RE);
+  const color = COLOR_MAP[colorKey] || (hex && '#' + hex[1]) || (info && info.color) || COLOR_MAP.sky;
+
   return {
-    bg: BG_CODE_RE.test(bg) ? bg : '',
-    char: CHAR_CODE_RE.test(char) ? char : '',
-    name: fixText(str(q.name, '이름')).slice(0, 20),
+    bg: validBg(bg) ? bg : '',
+    char,
+    name: fixText(str(q.name, info ? info.name : '이름')).slice(0, 20),
     line: fixText(str(q.line)).slice(0, 200),
-    color: COLOR_MAP[colorKey] || COLOR_MAP.sky,
+    color,
     anim: str(q.anim) !== '0',
   };
+}
+
+// 배경: 숫자면 0 ~ BG_COUNT-1만, 영문 코드(t 등)는 그대로 허용
+function validBg(bg) {
+  if (!BG_CODE_RE.test(bg)) return false;
+  return /^[0-9]+$/.test(bg) ? Number(bg) < BG_COUNT : true;
+}
+
+// 캐릭터 코드 정리: 한글 별명·대소문자를 등록 코드로 바꾼다 (지율_2_13 → jiyul_2_13)
+function normChar(code) {
+  if (!CHAR_CODE_RE.test(code)) return '';
+  const i = code.indexOf('_');
+  const head = code.slice(0, i), rest = code.slice(i);
+  const id = ALIAS[head] || ALIAS[head.toLowerCase()];
+  if (id) return id + rest;
+  return /^[A-Za-z0-9]+$/.test(head) ? code : ''; // 등록 안 된 한글은 무시
 }
 
 // iOS 등에서 %가 한 번 더 인코딩돼 '%20'이 글자 그대로 들어오는 경우를 풀어준다.
@@ -113,25 +163,52 @@ function fixText(t) {
   return t.replace(/\\n/g, '\n');
 }
 
-async function assetMtime(sub, code) {
-  if (!code) return 0;
-  const st = await fs.stat(path.join(ASSET_DIR, sub, `${code}.png`)).catch(() => null);
+// 캐릭터 코드 → 실제 파일. 해당 그림이 없으면 비슷한 그림으로 대신한다.
+//  U1_2_13 → char/U1/2_13.png → (없으면) 의상 0의 같은 감정 → 의상 2의 기본 감정 → 0_0
+//  U1_13   → char/U1_13.png (예전 방식) → char/U1/0_13.png → char/U1/0_0.png
+async function resolveChar(code) {
+  if (!code) return null;
+  const [name, ...nums] = code.split('_');
+  const n = nums.map(Number);
+  const tries = [];
+  if (n.length === 1) {
+    tries.push(`char/${code}.png`);
+    if (n[0] < EMOTIONS) tries.push(`char/${name}/0_${n[0]}.png`);
+  } else {
+    const [o, e] = n;
+    if (o >= OUTFITS || e >= EMOTIONS) return null;
+    tries.push(`char/${name}/${o}_${e}.png`, `char/${name}/0_${e}.png`, `char/${name}/${o}_0.png`);
+  }
+  tries.push(`char/${name}/0_0.png`);
+  for (const f of tries) if (await assetMtime(f)) return f;
+  return null;
+}
+
+async function assetMtime(file) {
+  if (!file) return 0;
+  const st = await fs.stat(path.join(ASSET_DIR, file)).catch(() => null);
   return st ? st.mtimeMs : 0;
 }
 
-async function loadAsset(sub, code) {
-  if (!code) return null;
-  return fs.readFile(path.join(ASSET_DIR, sub, `${code}.png`)).catch(() => null);
+async function loadAsset(file) {
+  if (!file) return null;
+  return fs.readFile(path.join(ASSET_DIR, file)).catch(() => null);
 }
 
 // 배경·캐릭터는 크기 조정한 결과(raw 픽셀)를 메모리에 보관해 재사용한다
+// 그림 1장이 메모리 2~4MB라 1GB 서버에 맞춰 최근에 쓴 80장만 둔다 (오래 안 쓴 것부터 버림)
+const LAYER_CACHE_MAX = 80;
 const layerCache = new Map();
 async function cachedLayer(key, make) {
-  if (!layerCache.has(key)) {
-    if (layerCache.size > 200) layerCache.delete(layerCache.keys().next().value);
-    layerCache.set(key, make());
+  let v = layerCache.get(key);
+  if (v) {
+    layerCache.delete(key); // 맨 뒤로 옮겨 '최근 사용' 표시
+  } else {
+    v = make();
+    if (layerCache.size >= LAYER_CACHE_MAX) layerCache.delete(layerCache.keys().next().value);
   }
-  return layerCache.get(key);
+  layerCache.set(key, v);
+  return v;
 }
 
 // 모서리를 둥글게 깎을 픽셀 목록 (한 번만 계산)
@@ -146,11 +223,11 @@ async function getCornerPixels() {
 }
 
 async function render(p) {
-  const [bgMt, charMt] = await Promise.all([assetMtime('bg', p.bg), assetMtime('char', p.char)]);
+  const [bgMt, charMt] = await Promise.all([assetMtime(p.bgFile), assetMtime(p.charFile)]);
 
   // 1) 바탕: 배경 + 하단 비네트
-  const base = await cachedLayer(`bg:${p.bg}:${bgMt}`, async () => {
-    const bgBuf = await loadAsset('bg', p.bg);
+  const base = await cachedLayer(`bg:${p.bgFile}:${bgMt}`, async () => {
+    const bgBuf = await loadAsset(p.bgFile);
     const layer = bgBuf
       ? await sharp(bgBuf).resize(W, H, { fit: 'cover' }).png().toBuffer()
       : Buffer.from(defaultSkySvg());
@@ -160,8 +237,8 @@ async function render(p) {
   });
 
   // 2) 캐릭터
-  const char = p.char ? await cachedLayer(`char:${p.char}:${charMt}`, async () => {
-    const buf = await loadAsset('char', p.char);
+  const char = p.charFile ? await cachedLayer(`char:${p.charFile}:${charMt}`, async () => {
+    const buf = await loadAsset(p.charFile);
     if (!buf) return null;
     const { data, info } = await sharp(buf)
       .resize(CHAR_MAX_W, CHAR_MAX_H, { fit: 'inside' })
