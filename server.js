@@ -39,6 +39,9 @@ const FLOAT_PX = 7;       // 위아래로 떠오르는 폭(px)
 // ── 캐릭터 뒤 배경 흐림 (캐릭터가 있을 때만). 0이면 끔, 클수록 흐림. URL에 blur=0~10으로 바꿀 수도 있음 ──
 const BG_BLUR = 3;
 
+// ── 대사 한 줄 글자 수 (대화창 너비 기준, 4줄까지 표시) ──
+const LINE_CHARS = 32;
+
 // ── 캐릭터 배치 (기존 디자인과 동일: 가로 중앙, 아래 정렬) ──
 const CHAR_MAX_W = 600;
 const CHAR_MAX_H = Math.round(H * 0.9);
@@ -328,7 +331,7 @@ function roundMaskSvg() {
 
 function uiSvg({ name, line, color }) {
   const initial = escapeXml(name.trim()[0] || '?');
-  const lines = wrapText(line, 18);
+  const lines = wrapText(line, LINE_CHARS).slice(0, 4); // 최대 4줄
   const lineSvg = lines
     .map((l, i) => `<tspan x="34" dy="${i === 0 ? 0 : 46}">${escapeXml(l)}</tspan>`)
     .join('');
