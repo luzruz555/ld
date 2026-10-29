@@ -13,6 +13,7 @@
  *  line      : 대사 (줄바꿈은 %0A)
  *  color     : red / sky / yellow / pink / gray (한글도 가능) 또는 색코드 ff8a3d. 등록 캐릭터는 생략 가능
  *  anim      : 0 이면 움직임 없는 정지 PNG로 반환 (기본은 애니메이션 WebP)
+ *  blur      : 캐릭터 뒤 배경 흐림 0~10 (기본 3, 0이면 끔)
  *
  * 같은 파라미터 조합은 처음 한 번만 렌더링하고, 이후엔 디스크 캐시에서 바로 응답한다.
  */
@@ -34,6 +35,9 @@ const W = 1216, H = 832;
 const FRAMES = 20;        // 프레임 수
 const FRAME_DELAY = 120;  // 프레임당 ms → 20 × 120 = 2.4초에 한 번 왕복
 const FLOAT_PX = 7;       // 위아래로 떠오르는 폭(px)
+
+// ── 캐릭터 뒤 배경 흐림 (캐릭터가 있을 때만). 0이면 끔, 클수록 흐림. URL에 blur=0~10으로 바꿀 수도 있음 ──
+const BG_BLUR = 3;
 
 // ── 캐릭터 배치 (기존 디자인과 동일: 가로 중앙, 아래 정렬) ──
 const CHAR_MAX_W = 600;
@@ -76,8 +80,8 @@ for (const [id, c] of Object.entries(CHARS)) {
 }
 
 // ── 캐릭터 1명당 의상·감정 개수 (여기 숫자만 바꾸면 됨) ──
-const OUTFITS = 4;    // 의상 0 ~ 3
-const EMOTIONS = 25;  // 감정 0 ~ 24
+const OUTFITS = 3;    // 의상 0 ~ 2
+const EMOTIONS = 20;  // 감정 0 ~ 19
 
 const app = express();
 const inFlight = new Map(); // 같은 요청이 동시에 여러 번 와도 한 번만 렌더링
@@ -135,6 +139,7 @@ function parseParams(q) {
     line: fixText(str(q.line)).slice(0, 200),
     color,
     anim: str(q.anim) !== '0',
+    blur: (() => { const b = parseFloat(str(q.blur)); return isNaN(b) ? BG_BLUR : Math.min(10, Math.max(0, b)); })(),
   };
 }
 
@@ -226,11 +231,13 @@ async function render(p) {
   const [bgMt, charMt] = await Promise.all([assetMtime(p.bgFile), assetMtime(p.charFile)]);
 
   // 1) 바탕: 배경 + 하단 비네트
-  const base = await cachedLayer(`bg:${p.bgFile}:${bgMt}`, async () => {
+  const blur = p.charFile ? p.blur : 0;
+  const base = await cachedLayer(`bg:${p.bgFile}:${bgMt}:${blur}`, async () => {
     const bgBuf = await loadAsset(p.bgFile);
-    const layer = bgBuf
+    let layer = bgBuf
       ? await sharp(bgBuf).resize(W, H, { fit: 'cover' }).png().toBuffer()
       : Buffer.from(defaultSkySvg());
+    if (blur >= 0.3) layer = await sharp(layer).blur(blur).png().toBuffer();
     return sharp(layer)
       .composite([{ input: Buffer.from(vignetteSvg()), top: 0, left: 0 }])
       .ensureAlpha().raw().toBuffer();
