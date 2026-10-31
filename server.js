@@ -84,7 +84,7 @@ for (const [id, c] of Object.entries(CHARS)) {
 
 // ── 캐릭터 1명당 의상·감정 개수 (여기 숫자만 바꾸면 됨) ──
 const OUTFITS = 3;    // 의상 0 ~ 2
-const EMOTIONS = 20;  // 감정 0 ~ 19
+const EMOTIONS = 25;  // 감정 0 ~ 24
 
 const app = express();
 const inFlight = new Map(); // 같은 요청이 동시에 여러 번 와도 한 번만 렌더링
