@@ -59,7 +59,7 @@ const COLOR_MAP = {
 
 // 영문/숫자만 허용 → 경로 조작(../) 차단. 파일만 추가하면 새 코드가 바로 동작한다.
 const BG_CODE_RE = /^[A-Za-z0-9]+$/;
-const CHAR_CODE_RE = /^[A-Za-z0-9가-힣]+(_[0-9]{1,2}){1,2}$/;
+const CHAR_CODE_RE = /^[A-Za-z0-9가-힣]+(_[0-9]{1,2}){0,2}$/;
 const HEX_RE = /^#?([0-9A-Fa-f]{6})$/;
 
 // ── 배경 개수 (0 ~ 19) ──
@@ -96,7 +96,9 @@ app.get('/', async (req, res) => {
     // 같은 이름으로 이미지를 교체해도 새로 그리도록 파일 수정시각을 캐시 키에 포함
     p.bgFile = p.bg ? `bg/${p.bg}.png` : null;
     p.charFile = await resolveChar(p.char);
-    const mtimes = await Promise.all([assetMtime(p.bgFile), assetMtime(p.charFile)]);
+    p.silhouette = !!p.char && !p.charFile; // 그림이 없는 인물 → 회색 실루엣
+    const mtimes = await Promise.all([assetMtime(p.bgFile), assetMtime(p.charFile),
+      p.silhouette ? assetMtime(SILHOUETTE_FILE) : 0]);
     const key = crypto.createHash('sha1').update(JSON.stringify([p, mtimes])).digest('hex');
     const file = path.join(CACHE_DIR, `${key}.${ext}`);
 
@@ -129,16 +131,18 @@ function parseParams(q) {
   const str = (v, d = '') => (typeof v === 'string' ? v : d);
   const bg = str(q.bg).trim();
   const char = normChar(fixText(str(q.char)).trim());
-  const info = char ? CHARS[char.split('_')[0]] : null;
+  const head = char ? char.split('_')[0] : '';
+  const info = CHARS[head] || null;
 
   const colorKey = fixText(str(q.color)).trim().toLowerCase();
   const hex = colorKey.match(HEX_RE);
-  const color = COLOR_MAP[colorKey] || (hex && '#' + hex[1]) || (info && info.color) || COLOR_MAP.sky;
+  const color = COLOR_MAP[colorKey] || (hex && '#' + hex[1]) || (info && info.color)
+    || (char ? COLOR_MAP.gray : COLOR_MAP.sky); // 등록 안 된 인물은 회색
 
   return {
     bg: validBg(bg) ? bg : '',
     char,
-    name: fixText(str(q.name, info ? info.name : '이름')).slice(0, 20),
+    name: fixText(str(q.name, info ? info.name : (head || '이름'))).slice(0, 20),
     line: fixText(str(q.line)).slice(0, 200),
     color,
     anim: str(q.anim) !== '0',
@@ -155,11 +159,10 @@ function validBg(bg) {
 // 캐릭터 코드 정리: 한글 별명·대소문자를 등록 코드로 바꾼다 (지율_2_13 → jiyul_2_13)
 function normChar(code) {
   if (!CHAR_CODE_RE.test(code)) return '';
-  const i = code.indexOf('_');
+  const i = code.includes('_') ? code.indexOf('_') : code.length;
   const head = code.slice(0, i), rest = code.slice(i);
   const id = ALIAS[head] || ALIAS[head.toLowerCase()];
-  if (id) return id + rest;
-  return /^[A-Za-z0-9]+$/.test(head) ? code : ''; // 등록 안 된 한글은 무시
+  return id ? id + rest : code; // 등록 안 된 인물은 그대로 (그림이 없으면 회색 실루엣)
 }
 
 // iOS 등에서 %가 한 번 더 인코딩돼 '%20'이 글자 그대로 들어오는 경우를 풀어준다.
@@ -179,7 +182,9 @@ async function resolveChar(code) {
   const [name, ...nums] = code.split('_');
   const n = nums.map(Number);
   const tries = [];
-  if (n.length === 1) {
+  if (n.length === 0) {
+    // 번호 없이 이름만 (예: 담임) → 기본 그림만 찾음
+  } else if (n.length === 1) {
     tries.push(`char/${code}.png`);
     if (n[0] < EMOTIONS) tries.push(`char/${name}/0_${n[0]}.png`);
   } else {
@@ -234,7 +239,7 @@ async function render(p) {
   const [bgMt, charMt] = await Promise.all([assetMtime(p.bgFile), assetMtime(p.charFile)]);
 
   // 1) 바탕: 배경 + 하단 비네트
-  const blur = p.charFile ? p.blur : 0;
+  const blur = (p.charFile || p.silhouette) ? p.blur : 0;
   const base = await cachedLayer(`bg:${p.bgFile}:${bgMt}:${blur}`, async () => {
     const bgBuf = await loadAsset(p.bgFile);
     let layer = bgBuf
@@ -251,6 +256,13 @@ async function render(p) {
     const buf = await loadAsset(p.charFile);
     if (!buf) return null;
     const { data, info } = await sharp(buf)
+      .resize(CHAR_MAX_W, CHAR_MAX_H, { fit: 'inside' })
+      .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    return { data, w: info.width, h: info.height };
+  }) : p.silhouette ? await cachedLayer(`silhouette:${await assetMtime(SILHOUETTE_FILE)}`, async () => {
+    // char/silhouette.png 가 있으면 그걸 쓰고, 없으면 기본 회색 실루엣
+    const own = await loadAsset(SILHOUETTE_FILE);
+    const { data, info } = await sharp(own || Buffer.from(silhouetteSvg()))
       .resize(CHAR_MAX_W, CHAR_MAX_H, { fit: 'inside' })
       .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     return { data, w: info.width, h: info.height };
@@ -327,6 +339,22 @@ function vignetteSvg() {
 function roundMaskSvg() {
   return `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${W}" height="${H}" rx="14" fill="#fff"/></svg>`;
+}
+
+// 그림이 없는 인물용 실루엣. 이 파일을 넣으면 그 그림을 쓴다.
+const SILHOUETTE_FILE = 'char/silhouette.png';
+
+// 파일이 없을 때 쓰는 기본 회색 실루엣 (상반신)
+function silhouetteSvg() {
+  return `<svg width="460" height="749" xmlns="http://www.w3.org/2000/svg">
+  <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="90" x2="0" y2="749">
+    <stop offset="0" stop-color="#b3b9c0"/><stop offset="1" stop-color="#7d858e"/>
+  </linearGradient></defs>
+  <g fill="url(#g)" opacity="0.92">
+    <ellipse cx="230" cy="190" rx="84" ry="98"/>
+    <path d="M200 262 L200 318 C150 330 84 352 58 410 C40 452 34 560 30 749 L430 749 C426 560 420 452 402 410 C376 352 310 330 260 318 L260 262 Z"/>
+  </g>
+</svg>`;
 }
 
 function uiSvg({ name, line, color }) {
